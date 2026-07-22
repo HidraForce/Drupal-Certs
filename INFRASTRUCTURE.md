@@ -33,7 +33,7 @@ Create one Railway project and two services from the GitHub repository:
 
 `WEB_ORIGIN` must exactly match `https://YOUR-SITE.vercel.app` with no trailing slash. `ADMIN_EMAILS` is a comma-separated allowlist of Google-account emails. Tokens must contain a verified email, and the backend enforces the list.
 
-For credentials, store the service-account JSON in a secret variable and expose it as a file or use Railway's documented sealed-variable/file mechanism. Point `GOOGLE_APPLICATION_CREDENTIALS` at that file. Do not place service credentials in Vercel.
+For credentials, open Railway's **Variables → RAW Editor** and add `FIREBASE_CREDENTIALS_JSON` with the complete service-account JSON as its value. Railway supports multiline variables. Seal this variable after saving it. The services consume the JSON directly, so no credential file or `GOOGLE_APPLICATION_CREDENTIALS` path is required. Do not place this value in Vercel.
 
 Generate a Railway project token for each service, then create GitHub secrets:
 
