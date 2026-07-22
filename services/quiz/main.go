@@ -76,7 +76,7 @@ func main() {
 		writeJSON(w, 200, map[string]string{"status": "ok", "service": "quiz"})
 	})
 	r.Get("/v1/questions", s.listQuestions)
-	r.Post("/v1/questions/{id}/check", s.checkAnswer)
+	r.With(s.requireUser).Post("/v1/questions/{id}/check", s.checkAnswer)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAdmin)
 		r.Get("/v1/admin/status", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]bool{"admin": true}) })
@@ -171,6 +171,25 @@ func (s *server) requireAdmin(next http.Handler) http.Handler {
 	})
 }
 
+func (s *server) requireUser(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.auth == nil {
+			http.Error(w, "authentication is not configured", 503)
+			return
+		}
+		raw := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if raw == "" {
+			http.Error(w, "authentication required", 401)
+			return
+		}
+		if _, err := s.auth.VerifyIDToken(r.Context(), raw); err != nil {
+			http.Error(w, "invalid token", 401)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	file, _, err := r.FormFile("file")
@@ -252,9 +271,25 @@ func adminSet(value string) map[string]bool {
 }
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", env("WEB_ORIGIN", "http://localhost:4200"))
+		origin, allowed := r.Header.Get("Origin"), false
+		for _, value := range strings.Split(env("WEB_ORIGIN", "http://localhost:4200"), ",") {
+			if strings.TrimSpace(value) == origin {
+				allowed = true
+				break
+			}
+		}
+		if origin != "" && !allowed {
+			http.Error(w, "origin not allowed", 403)
+			return
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return

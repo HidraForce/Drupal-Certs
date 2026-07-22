@@ -108,9 +108,25 @@ func requireUser(client *auth.Client) func(http.Handler) http.Handler {
 
 func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", env("WEB_ORIGIN", "http://localhost:4200"))
+		origin, allowed := r.Header.Get("Origin"), false
+		for _, value := range strings.Split(env("WEB_ORIGIN", "http://localhost:4200"), ",") {
+			if strings.TrimSpace(value) == origin {
+				allowed = true
+				break
+			}
+		}
+		if origin != "" && !allowed {
+			http.Error(w, "origin not allowed", 403)
+			return
+		}
+		if allowed {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(204)
 			return
