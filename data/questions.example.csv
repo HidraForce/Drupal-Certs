@@ -1,0 +1,3 @@
+id,domain,prompt,option_a,option_b,option_c,option_d,answer,explanation,source
+twig-001,Twig,What does Twig do with printed variables by default?,Auto-escapes them,Executes them as PHP,Stores them in cache,Converts them to YAML,0,Drupal Twig automatically escapes output by default.,https://www.drupal.org/docs/develop/theming-drupal/twig-in-drupal
+theme-001,Theme system,Which file describes a Drupal theme?,THEME.info.yml,composer.lock,settings.php,services.xml,0,A theme is declared by its .info.yml file.,https://www.drupal.org/docs/develop/theming-drupal/defining-a-theme-with-an-infoyml-file

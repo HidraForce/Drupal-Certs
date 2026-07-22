@@ -1,0 +1,16 @@
+<header class="nav"><a class="brand" href="#">Drupal<span>Spark</span> ✦</a><div class="auth">@if (user()) {@if (isAdmin()) {<button class="ghost" (click)="adminOpen.set(!adminOpen())">⚙ Admin</button>}<span class="user">{{ user()?.displayName }}</span><button class="ghost" (click)="logout()">Sign out</button>} @else {<button class="ghost" (click)="login()">Continue with Google</button>}</div></header>
+<main>
+  @if (adminOpen() && isAdmin()) {<section class="admin-card"><div><span class="eyebrow">QUESTION ADMIN</span><h2>Import a fresh question set 📚</h2><p>CSV columns: id, domain, prompt, option_a–option_d, answer (0–3), explanation, source.</p></div><div class="upload"><input type="file" accept=".csv,text/csv" (change)="selectCSV($event)"><button class="primary" [disabled]="importing()" (click)="importCSV()">{{ importing() ? 'Importing…' : 'Import CSV' }}</button></div>@if (importMessage()) {<p class="import-message">{{ importMessage() }}</p>}</section>}
+  <section class="hero"><div><span class="eyebrow">DRUPAL FRONT-END CERTIFICATION</span><h1>Study bright.<br><em>Ship brilliant.</em></h1><p>Fast practice sessions for Drupal theming, Twig, accessibility, and front-end performance.</p></div><div class="orb" aria-hidden="true"><span>🧠</span><i>✦</i></div></section>
+  <section class="stats"><div><strong>{{ score() }}</strong><span>Correct</span></div><div><strong>{{ index() + 1 }}/{{ questions().length || 0 }}</strong><span>Session</span></div><div><strong>🔥 1</strong><span>Day streak</span></div></section>
+  <section class="quiz-card">
+    @if (loading()) { <p class="empty">Warming up the neurons… ✨</p> }
+    @else if (current; as q) {
+      <div class="quiz-head"><span>{{ q.domain }}</span><span>Question {{ index() + 1 }}</span></div><h2>{{ q.prompt }}</h2>
+      <div class="answers">@for (option of q.options; track option; let i = $index) {<button [class.selected]="selected() === i" [class.correct]="result() && result()?.answer === i" [class.wrong]="result() && selected() === i && !result()?.correct" (click)="choose(i)"><b>{{ ['A','B','C','D'][i] }}</b>{{ option }}</button>}</div>
+      @if (result(); as feedback) {<div class="feedback" [class.win]="feedback.correct"><span>{{ feedback.correct ? '🎉' : '💡' }}</span><div><strong>{{ feedback.correct ? 'Brilliant!' : 'Almost there!' }}</strong><p>{{ feedback.explanation }}</p></div></div>}
+      <div class="actions">@if (!result()) {<button class="primary" [disabled]="selected() === null" (click)="check()">Check answer <span>→</span></button>} @else {<button class="primary" (click)="next()">Next spark <span>→</span></button>}</div>
+    } @else { <p class="empty">The question service is taking a nap. Try again shortly. 😴</p> }
+  </section>
+</main>
+<footer>Made for curious Drupal minds <span>•</span> Keep learning, keep sparkling ✨</footer>
