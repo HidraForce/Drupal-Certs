@@ -1,108 +1,106 @@
-# Infrastructure setup
+# Vercel + Firebase infrastructure setup
 
-This project supports two backend targets:
+Production uses three Vercel projects connected to this one GitHub repository:
 
-1. **Railway** — simplest deployment and the existing CI workflow target.
-2. **Google Cloud Run** — closest to “hosting the Go API on Firebase.” Firebase Hosting cannot execute Go itself; Cloud Run executes each container inside the same Google Cloud project used by Firebase.
-
-## 1. Create Firebase resources
-
-1. Create a project at Firebase Console and record its project ID.
-2. Add a **Web app** under Project settings.
-3. In Authentication → Sign-in method, enable **Google**.
-4. Create Firestore in Native mode. Choose the region nearest most users; changing it later is difficult.
-5. In Authentication → Settings → Authorized domains, later add the Vercel production domain.
-6. Deploy the checked-in rules from `infra/firebase`:
-
-```bash
-firebase login
-firebase use --add YOUR_PROJECT_ID
-firebase deploy --only firestore:rules
-```
-
-The Go services use the Firebase Admin SDK and therefore need Application Default Credentials. On Cloud Run this is automatic. On Railway, create a narrowly scoped Google Cloud service account, download its JSON key once, store the JSON as a Railway secret, and never commit it.
-
-## 2A. Deploy the APIs to Railway
-
-Create one Railway project and two services from the GitHub repository:
-
-| Service | Root directory | Variables |
+| Vercel project | Root Directory | Purpose |
 |---|---|---|
-| `quiz` | `/services/quiz` | `FIREBASE_PROJECT_ID`, `WEB_ORIGIN`, `ADMIN_EMAILS`, credentials |
-| `progress` | `/services/progress` | `FIREBASE_PROJECT_ID`, `WEB_ORIGIN`, credentials |
+| `drupal-certs-web` | `web` | Angular frontend |
+| `drupal-certs-quiz` | `services/quiz` | Go/Chi quiz and admin API |
+| `drupal-certs-progress` | `services/progress` | Go/Chi progress API |
 
-`WEB_ORIGIN` must exactly match `https://YOUR-SITE.vercel.app` with no trailing slash. `ADMIN_EMAILS` is a comma-separated allowlist of Google-account emails. Tokens must contain a verified email, and the backend enforces the list.
+The APIs run from `Dockerfile.vercel` container images. Firebase provides Google Authentication and Firestore. Every push to `main` is automatically deployed by Vercel's Git integration; `.github/workflows/ci.yml` separately verifies Go and Angular builds.
 
-For credentials, open Railway's **Variables → RAW Editor** and add `FIREBASE_CREDENTIALS_JSON` with the complete service-account JSON as its value. Railway supports multiline variables. Seal this variable after saving it. The services consume the JSON directly, so no credential file or `GOOGLE_APPLICATION_CREDENTIALS` path is required. Do not place this value in Vercel.
+## 1. Firebase
 
-Generate a Railway project token for each service, then create GitHub secrets:
+1. Create a project in Firebase Console and register a Web app.
+2. Enable **Authentication → Sign-in method → Google**.
+3. Create Firestore in Native mode.
+4. Download a service-account key from **Project settings → Service accounts → Firebase Admin SDK → Generate new private key**.
+5. Never commit or add that JSON to the Angular project.
+6. Deploy `infra/firebase/firestore.rules` with Firebase CLI.
 
-- `RAILWAY_QUIZ_TOKEN`
-- `RAILWAY_PROGRESS_TOKEN`
+## 2. Deploy the Quiz API to Vercel
 
-## 2B. Deploy the APIs to Cloud Run
+1. In Vercel, choose **Add New → Project** and import this GitHub repository.
+2. Name it `drupal-certs-quiz`.
+3. Set **Root Directory** to `services/quiz`.
+4. Vercel should detect `Dockerfile.vercel`. Do not use the Services preset and do not set npm build commands.
+5. Add Production, Preview, and Development variables:
 
-Cloud Run has free usage quota but requires a billing account and upgrades the Firebase project to Blaze. Set a small budget alert before deploying.
-
-```bash
-gcloud auth login
-gcloud config set project YOUR_PROJECT_ID
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
-
-gcloud run deploy drupal-quiz \
-  --source services/quiz \
-  --region southamerica-east1 \
-  --allow-unauthenticated \
-  --min-instances 0 \
-  --set-env-vars FIREBASE_PROJECT_ID=YOUR_PROJECT_ID,WEB_ORIGIN=https://YOUR-SITE.vercel.app,ADMIN_EMAILS=you@example.com
-
-gcloud run deploy drupal-progress \
-  --source services/progress \
-  --region southamerica-east1 \
-  --allow-unauthenticated \
-  --min-instances 0 \
-  --set-env-vars FIREBASE_PROJECT_ID=YOUR_PROJECT_ID,WEB_ORIGIN=https://YOUR-SITE.vercel.app
+```env
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CREDENTIALS_JSON={the complete service-account JSON}
+ADMIN_EMAILS=your-google-email@gmail.com
+WEB_ORIGIN=https://your-future-web-project.vercel.app
 ```
 
-“Allow unauthenticated” permits the browser to reach the services. Protected routes still verify Firebase ID tokens in application code. Leave minimum instances at zero to scale to zero.
+6. Deploy and test `https://QUIZ-DOMAIN/health` and `https://QUIZ-DOMAIN/v1/questions`.
 
-Grant each Cloud Run runtime service account only the Firebase/Firestore permissions it needs. Record both generated service URLs for Vercel.
+## 3. Deploy the Progress API to Vercel
 
-## 3. Deploy Angular to Vercel
+1. Import the same repository as a second project.
+2. Name it `drupal-certs-progress`.
+3. Set **Root Directory** to `services/progress`.
+4. Let Vercel detect `Dockerfile.vercel`.
+5. Add:
 
-The repository-level `vercel.json` already sets the install command, build command, output directory, and SPA fallback.
+```env
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_CREDENTIALS_JSON={the complete service-account JSON}
+WEB_ORIGIN=https://your-future-web-project.vercel.app
+```
 
-1. Push the repository to GitHub.
-2. In Vercel, select **Add New → Project** and import the repository.
-3. Keep **Root Directory** at the repository root because `vercel.json` is there.
-4. Add these Production and Preview environment variables:
+6. Deploy and test `https://PROGRESS-DOMAIN/health`. A request to `/v1/progress` without a Firebase token should return 401, which is correct.
 
-| Variable | Value |
-|---|---|
-| `FIREBASE_API_KEY` | Firebase web-app config |
-| `FIREBASE_AUTH_DOMAIN` | `YOUR_PROJECT_ID.firebaseapp.com` |
-| `FIREBASE_PROJECT_ID` | Firebase project ID |
-| `FIREBASE_APP_ID` | Firebase web-app config |
-| `QUIZ_API_URL` | Railway or Cloud Run quiz URL |
-| `PROGRESS_API_URL` | Railway or Cloud Run progress URL |
+## 4. Deploy Angular to Vercel
 
-5. Deploy, copy the final `*.vercel.app` domain, add it to Firebase Authorized domains, and set both APIs' `WEB_ORIGIN` to that exact URL. Redeploy the APIs after changing it.
+1. Import the same repository as a third project.
+2. Name it `drupal-certs-web`.
+3. Set **Root Directory** to `web`.
+4. Vercel should detect Angular and read `web/vercel.json`:
 
-The Firebase API key is intentionally present in browser configuration; it identifies the Firebase project and is not an Admin credential. Security comes from Firebase Authentication, Firestore Rules, server-side token verification, and API-key restrictions configured in Google Cloud.
+```text
+Install Command: npm ci
+Build Command: npm run build
+Output Directory: dist/web/browser
+```
 
-## 4. Use the admin panel
+5. Add:
 
-1. Set your Google email in the quiz service's `ADMIN_EMAILS` variable.
-2. Sign into the deployed Angular app using that exact Google account.
-3. The **Admin** button appears after the backend validates the token.
-4. Import `data/questions.example.csv` or a file following `data/question.schema.json`.
+```env
+FIREBASE_API_KEY=your-firebase-web-api-key
+FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_APP_ID=your-firebase-web-app-id
+QUIZ_API_URL=https://your-quiz-project.vercel.app
+PROGRESS_API_URL=https://your-progress-project.vercel.app
+```
 
-Imports are limited to 2 MiB and 400 rows. IDs are Firestore document IDs, so importing an existing ID updates that question. Correct answers are zero-based: `0=A`, `1=B`, `2=C`, `3=D`.
+6. Deploy and copy the stable production domain.
 
-## 5. Production checklist
+## 5. Connect the origins
 
-- Set a Google Cloud billing budget and alerts; alerts notify but do not cap spend.
-- Restrict CORS using the exact Vercel origin.
-- Use separate Firebase projects for development and production.
-- Rotate any downloaded service-account key and prefer keyless workload identity when the host supports it.
-- Confirm `/health` on both APIs, Google sign-in, admin CSV import, a quiz answer, and progress saving.
+On both API projects, replace `WEB_ORIGIN` with the exact Angular production origin:
+
+```env
+WEB_ORIGIN=https://your-web-project.vercel.app
+```
+
+Do not include a trailing slash. Redeploy both API projects after changing it. In Firebase Authentication → Settings → Authorized domains, add `your-web-project.vercel.app` without `https://`.
+
+## 6. Admin CSV import
+
+1. Ensure the quiz project has your exact verified Google email in `ADMIN_EMAILS`.
+2. Sign into the Angular site using that account.
+3. Open **Admin** and import `data/questions.example.csv`.
+
+Imports are limited to 2 MiB and 400 rows. Answers are zero-based: `0=A`, `1=B`, `2=C`, `3=D`. Re-importing an existing question ID updates it.
+
+## Troubleshooting
+
+- **`cd web: No such file or directory`**: the web project's root is already `web`; use the checked-in `web/vercel.json`, which does not run `cd web`.
+- **API is detected as Angular or Node**: the API project's Root Directory is wrong. It must be `services/quiz` or `services/progress`.
+- **Firebase default credentials error**: `FIREBASE_CREDENTIALS_JSON` is absent or malformed. Paste the complete JSON including the outer braces.
+- **CORS error**: `WEB_ORIGIN` does not exactly equal the browser's Angular origin.
+- **401 from `/v1/progress`**: expected without a Firebase bearer token.
+- **403 from `/v1/admin/status`**: the signed-in verified email is not in `ADMIN_EMAILS`.
