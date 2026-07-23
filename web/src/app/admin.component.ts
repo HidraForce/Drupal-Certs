@@ -30,14 +30,14 @@ interface ExhaustionAlert { id:string; email:string; certification:string; answe
       </section>
     } @else {
       <section class="admin-panel framed"><span class="eyebrow">SUPPLY WARNING</span><h1>Exhausted question banks</h1><p>These learners reached the end of an available certification bank without repeated questions.</p>
-        <div class="ledger-list">@for(item of alerts();track item.id){<article><div><small>{{item.certification}}</small><h3>{{item.email||'Unknown learner'}}</h3><p>{{item.answeredCount}} answered · {{item.availableCount}} available in track</p></div><button class="primary" (click)="resolveAlert(item.id)">Acknowledge</button></article>}@empty{<p class="empty-ledger">All learners still have unanswered questions.</p>}</div>
+        <div class="ledger-list">@for(item of alerts();track item.id){<article><div><small>{{item.certification}}</small><h3>{{item.email||'Unknown learner'}}</h3><p>{{item.answeredCount}} answered · {{item.availableCount}} available in track</p></div><div class="alert-actions"><button class="report-button" [disabled]="resettingAlert()===item.id" (click)="resolveAlert(item.id)">Acknowledge</button><button class="primary" [disabled]="resettingAlert()===item.id" (click)="resetAlert(item.id)">{{resettingAlert()===item.id?'Resetting…':'Reset answers'}}</button></div></article>}@empty{<p class="empty-ledger">All learners still have unanswered questions.</p>}</div>
       </section>
     }
   }</main>`
 })
 export class AdminComponent {
   private http=inject(HttpClient);private config=inject(APP_CONFIG);private auth=inject(AuthService);
-  checking=signal(true);allowed=signal(false);importing=signal(false);fileName=signal('');message=signal('');error=signal('');tab=signal<'import'|'review'|'alerts'>('import');reviews=signal<ReviewItem[]>([]);alerts=signal<ExhaustionAlert[]>([]);
+  checking=signal(true);allowed=signal(false);importing=signal(false);fileName=signal('');message=signal('');error=signal('');tab=signal<'import'|'review'|'alerts'>('import');reviews=signal<ReviewItem[]>([]);alerts=signal<ExhaustionAlert[]>([]);resettingAlert=signal('');
   certification:'frontend'|'backend'|'devops'='frontend';file:File|null=null;
   constructor(){void this.check();}
   trackLabel(){return this.certification==='frontend'?'Front End':this.certification==='backend'?'Back End':'DevOps';}
@@ -45,6 +45,7 @@ export class AdminComponent {
   async upload(){if(!this.file)return;this.importing.set(true);this.error.set('');const form=new FormData();form.append('file',this.file);form.append('certification',this.certification);try{const token=await this.auth.token();this.http.post<{imported:number}>(`${this.config.quizApi}/v1/admin/questions/import`,form,{headers:{Authorization:`Bearer ${token}`}}).subscribe({next:r=>{this.message.set(`Loaded ${r.imported} ${this.trackLabel()} questions.`);this.importing.set(false);},error:e=>{this.error.set(typeof e.error==='string'?e.error:'Import failed.');this.importing.set(false);}});}catch(e:any){this.error.set(e.message);this.importing.set(false);}}
   async resolveReview(id:string){const h=await this.headers();this.http.post(`${this.config.quizApi}/v1/admin/questions/${id}/review`,{},h).subscribe(()=>this.reviews.update(items=>items.filter(item=>item.id!==id)));}
   async resolveAlert(id:string){const h=await this.headers();this.http.post(`${this.config.quizApi}/v1/admin/exhaustion-alerts/${id}/resolve`,{},h).subscribe(()=>this.alerts.update(items=>items.filter(item=>item.id!==id)));}
+  async resetAlert(id:string){if(this.resettingAlert())return;this.resettingAlert.set(id);try{const h=await this.headers();this.http.post(`${this.config.quizApi}/v1/admin/exhaustion-alerts/${id}/reset`,{},h).subscribe({next:()=>{this.alerts.update(items=>items.filter(item=>item.id!==id));this.resettingAlert.set('');},error:()=>this.resettingAlert.set('')});}catch{this.resettingAlert.set('');}}
   private async headers(){const token=await this.auth.token();return{headers:{Authorization:`Bearer ${token}`}};}
   private async check(){try{const h=await this.headers();this.http.get(`${this.config.quizApi}/v1/admin/status`,h).subscribe({next:()=>{this.allowed.set(true);this.checking.set(false);this.loadQueues(h);},error:()=>{this.allowed.set(false);this.checking.set(false);}});}catch{this.checking.set(false);}}
   private loadQueues(h:{headers:{Authorization:string}}){this.http.get<ReviewItem[]>(`${this.config.quizApi}/v1/admin/review`,h).subscribe(items=>this.reviews.set(items));this.http.get<ExhaustionAlert[]>(`${this.config.quizApi}/v1/admin/exhaustion-alerts`,h).subscribe(items=>this.alerts.set(items));}

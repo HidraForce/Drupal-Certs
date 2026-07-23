@@ -100,6 +100,7 @@ func main() {
 		r.Post("/v1/admin/questions/{id}/review", s.resolveReview)
 		r.Get("/v1/admin/exhaustion-alerts", s.exhaustionAlerts)
 		r.Post("/v1/admin/exhaustion-alerts/{id}/resolve", s.resolveExhaustionAlert)
+		r.Post("/v1/admin/exhaustion-alerts/{id}/reset", s.resetExhaustedUser)
 	})
 	port := env("PORT", "8081")
 	log.Printf("quiz service listening on :%s", port)
@@ -129,9 +130,6 @@ func (s *server) questions(ctx context.Context) ([]Question, error) {
 			q.Certification = "frontend"
 		}
 		q.Certification = strings.ToLower(strings.TrimSpace(q.Certification))
-		if !strings.HasPrefix(q.ID, q.Certification+"--") {
-			continue
-		}
 		result = append(result, q)
 	}
 	if len(result) == 0 {
@@ -409,6 +407,63 @@ func (s *server) resolveExhaustionAlert(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, 200, map[string]bool{"resolved": true})
+}
+
+func (s *server) resetExhaustedUser(w http.ResponseWriter, r *http.Request) {
+	alertRef := s.store.Collection("exhaustionAlerts").Doc(chi.URLParam(r, "id"))
+	alert, err := alertRef.Get(r.Context())
+	if err != nil {
+		if status.Code(err) == codes.NotFound {
+			http.Error(w, "exhaustion alert not found", 404)
+			return
+		}
+		http.Error(w, "could not load exhaustion alert", 500)
+		return
+	}
+	uid, _ := alert.Data()["uid"].(string)
+	certification, _ := alert.Data()["certification"].(string)
+	if uid == "" || !validCertification(certification) {
+		http.Error(w, "exhaustion alert is invalid", 500)
+		return
+	}
+
+	iter := s.store.Collection("users").Doc(uid).Collection("answered").Where("certification", "==", certification).Documents(r.Context())
+	defer iter.Stop()
+	deleted := 0
+	batch := s.store.Batch()
+	pending := 0
+	for {
+		doc, nextErr := iter.Next()
+		if errors.Is(nextErr, iterator.Done) {
+			break
+		}
+		if nextErr != nil {
+			http.Error(w, "could not load user answer history", 500)
+			return
+		}
+		batch.Delete(doc.Ref)
+		deleted++
+		pending++
+		if pending == 400 {
+			if _, err := batch.Commit(r.Context()); err != nil {
+				http.Error(w, "could not reset user answer history", 500)
+				return
+			}
+			batch = s.store.Batch()
+			pending = 0
+		}
+	}
+	if pending > 0 {
+		if _, err := batch.Commit(r.Context()); err != nil {
+			http.Error(w, "could not reset user answer history", 500)
+			return
+		}
+	}
+	if _, err := alertRef.Delete(r.Context()); err != nil {
+		http.Error(w, "answer history reset, but alert could not be removed", 500)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"reset": true, "deletedAnswers": deleted, "certification": certification})
 }
 
 func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {

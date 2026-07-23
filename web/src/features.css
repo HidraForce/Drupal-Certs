@@ -33,3 +33,5 @@
 .review-explanation{margin-top:15px;padding:16px;background:#35253f;color:var(--cream);border:1px solid var(--brass)}
 .review-explanation p{margin:7px 0 0;color:#dfd0e2;line-height:1.6}
 @media(max-width:620px){.review-card header{align-items:flex-start;flex-direction:column}.review-answer{grid-template-columns:1fr}}
+.alert-actions{display:flex;justify-content:flex-end;align-items:center;gap:10px;flex-wrap:wrap}
+.session-notice{margin:8px 0 14px;padding:13px 16px;border:1px solid var(--brass);background:#35253f;color:var(--cream);font-size:13px;line-height:1.5}
