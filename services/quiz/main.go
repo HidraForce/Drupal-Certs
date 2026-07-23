@@ -128,6 +128,10 @@ func (s *server) questions(ctx context.Context) ([]Question, error) {
 		if q.Certification == "" {
 			q.Certification = "frontend"
 		}
+		q.Certification = strings.ToLower(strings.TrimSpace(q.Certification))
+		if !strings.HasPrefix(q.ID, q.Certification+"--") {
+			continue
+		}
 		result = append(result, q)
 	}
 	if len(result) == 0 {
@@ -429,6 +433,7 @@ func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 	for _, q := range questions {
 		q.Certification = certification
+		q.ID = certification + "--" + q.ID
 		ref := s.store.Collection("questions").Doc(q.ID)
 		batch.Set(ref, map[string]any{"id": q.ID, "certification": q.Certification, "domain": q.Domain, "prompt": q.Prompt, "options": q.Options, "answer": q.Answer, "explanation": q.Explanation, "source": q.Source, "updatedAt": now})
 	}
