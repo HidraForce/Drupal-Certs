@@ -2,9 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Drupal certification question",
   "type": "object",
-  "required": ["id", "domain", "prompt", "options", "answer", "explanation"],
+  "required": ["id", "certification", "domain", "prompt", "options", "answer", "explanation"],
   "properties": {
     "id": { "type": "string" },
+    "certification": { "type": "string", "enum": ["frontend", "backend", "devops"] },
     "domain": { "type": "string" },
     "prompt": { "type": "string" },
     "options": { "type": "array", "minItems": 2, "maxItems": 6, "items": { "type": "string" } },

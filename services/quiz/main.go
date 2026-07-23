@@ -24,18 +24,23 @@ import (
 )
 
 type Question struct {
-	ID          string   `json:"id" firestore:"id"`
-	Domain      string   `json:"domain" firestore:"domain"`
-	Prompt      string   `json:"prompt" firestore:"prompt"`
-	Options     []string `json:"options" firestore:"options"`
-	Answer      int      `json:"answer,omitempty" firestore:"answer"`
-	Explanation string   `json:"explanation,omitempty" firestore:"explanation"`
-	Source      string   `json:"source,omitempty" firestore:"source"`
+	ID            string   `json:"id" firestore:"id"`
+	Certification string   `json:"certification" firestore:"certification"`
+	Domain        string   `json:"domain" firestore:"domain"`
+	Prompt        string   `json:"prompt" firestore:"prompt"`
+	Options       []string `json:"options" firestore:"options"`
+	Answer        int      `json:"answer,omitempty" firestore:"answer"`
+	Explanation   string   `json:"explanation,omitempty" firestore:"explanation"`
+	Source        string   `json:"source,omitempty" firestore:"source"`
 }
 
 var demo = []Question{
-	{ID: "demo-1", Domain: "Drupal fundamentals", Prompt: "Which layer is responsible for Drupal's rendered page structure?", Options: []string{"Theme layer", "Database driver", "Queue worker", "Cache backend"}, Answer: 0, Explanation: "Themes and render arrays control presentation."},
-	{ID: "demo-2", Domain: "Twig", Prompt: "What is the safest default for values printed by Twig?", Options: []string{"They are auto-escaped", "They run as PHP", "They bypass caching", "They become JSON"}, Answer: 0, Explanation: "Drupal's Twig environment auto-escapes output by default."},
+	{ID: "frontend-1", Certification: "frontend", Domain: "Twig", Prompt: "What is the safest default for values printed by Twig?", Options: []string{"They are auto-escaped", "They run as PHP", "They bypass caching", "They become JSON"}, Answer: 0, Explanation: "Drupal's Twig environment auto-escapes output by default."},
+	{ID: "frontend-2", Certification: "frontend", Domain: "Theme system", Prompt: "Which file declares a Drupal theme?", Options: []string{"THEME.info.yml", "settings.php", "composer.lock", "services.xml"}, Answer: 0, Explanation: "A theme is declared with its .info.yml file."},
+	{ID: "backend-1", Certification: "backend", Domain: "Services", Prompt: "Which container holds registered Drupal services?", Options: []string{"Service container", "Render cache", "Theme registry", "State API"}, Answer: 0, Explanation: "Drupal services are registered and resolved through the service container."},
+	{ID: "backend-2", Certification: "backend", Domain: "Plugins", Prompt: "What does a plugin manager primarily handle?", Options: []string{"Plugin discovery and instantiation", "CSS compilation", "DNS routing", "Browser storage"}, Answer: 0, Explanation: "Plugin managers discover definitions and create plugin instances."},
+	{ID: "devops-1", Certification: "devops", Domain: "Configuration", Prompt: "Which command exports active Drupal configuration?", Options: []string{"drush config:export", "drush cache:rebuild", "composer audit", "phpunit --export"}, Answer: 0, Explanation: "Drush config:export writes active configuration to the sync directory."},
+	{ID: "devops-2", Certification: "devops", Domain: "Deployment", Prompt: "Where should production secrets be stored?", Options: []string{"A managed secret store", "Committed settings.php", "Public files", "Theme templates"}, Answer: 0, Explanation: "Secrets belong in protected environment or secret-management systems."},
 }
 
 type server struct {
@@ -106,6 +111,9 @@ func (s *server) questions(ctx context.Context) ([]Question, error) {
 		if err := doc.DataTo(&q); err != nil {
 			return nil, err
 		}
+		if q.Certification == "" {
+			q.Certification = "frontend"
+		}
 		result = append(result, q)
 	}
 	if len(result) == 0 {
@@ -116,10 +124,11 @@ func (s *server) questions(ctx context.Context) ([]Question, error) {
 
 func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
 	type publicQuestion struct {
-		ID      string   `json:"id"`
-		Domain  string   `json:"domain"`
-		Prompt  string   `json:"prompt"`
-		Options []string `json:"options"`
+		ID            string   `json:"id"`
+		Certification string   `json:"certification"`
+		Domain        string   `json:"domain"`
+		Prompt        string   `json:"prompt"`
+		Options       []string `json:"options"`
 	}
 	all, err := s.questions(r.Context())
 	if err != nil {
@@ -128,7 +137,7 @@ func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]publicQuestion, 0, len(all))
 	for _, q := range all {
-		out = append(out, publicQuestion{q.ID, q.Domain, q.Prompt, q.Options})
+		out = append(out, publicQuestion{q.ID, q.Certification, q.Domain, q.Prompt, q.Options})
 	}
 	writeJSON(w, 200, out)
 }
@@ -192,6 +201,11 @@ func (s *server) requireUser(next http.Handler) http.Handler {
 
 func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+	certification := strings.ToLower(strings.TrimSpace(r.FormValue("certification")))
+	if !validCertification(certification) {
+		http.Error(w, "certification must be frontend, backend, or devops", 400)
+		return
+	}
 	file, _, err := r.FormFile("file")
 	if err != nil {
 		http.Error(w, "attach a CSV file under field 'file'", 400)
@@ -206,8 +220,9 @@ func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {
 	batch := s.store.Batch()
 	now := time.Now().UTC()
 	for _, q := range questions {
+		q.Certification = certification
 		ref := s.store.Collection("questions").Doc(q.ID)
-		batch.Set(ref, map[string]any{"id": q.ID, "domain": q.Domain, "prompt": q.Prompt, "options": q.Options, "answer": q.Answer, "explanation": q.Explanation, "source": q.Source, "updatedAt": now})
+		batch.Set(ref, map[string]any{"id": q.ID, "certification": q.Certification, "domain": q.Domain, "prompt": q.Prompt, "options": q.Options, "answer": q.Answer, "explanation": q.Explanation, "source": q.Source, "updatedAt": now})
 	}
 	if _, err := batch.Commit(r.Context()); err != nil {
 		http.Error(w, "could not save questions", 500)
@@ -247,13 +262,17 @@ func parseCSV(input io.Reader) ([]Question, error) {
 		if err != nil || answer < 0 || answer > 3 {
 			return nil, fmt.Errorf("row %d answer must be 0, 1, 2, or 3", index+2)
 		}
-		q := Question{strings.TrimSpace(row[0]), strings.TrimSpace(row[1]), strings.TrimSpace(row[2]), []string{strings.TrimSpace(row[3]), strings.TrimSpace(row[4]), strings.TrimSpace(row[5]), strings.TrimSpace(row[6])}, answer, strings.TrimSpace(row[8]), strings.TrimSpace(row[9])}
+		q := Question{ID: strings.TrimSpace(row[0]), Domain: strings.TrimSpace(row[1]), Prompt: strings.TrimSpace(row[2]), Options: []string{strings.TrimSpace(row[3]), strings.TrimSpace(row[4]), strings.TrimSpace(row[5]), strings.TrimSpace(row[6])}, Answer: answer, Explanation: strings.TrimSpace(row[8]), Source: strings.TrimSpace(row[9])}
 		if q.ID == "" || q.Domain == "" || q.Prompt == "" {
 			return nil, fmt.Errorf("row %d is missing id, domain, or prompt", index+2)
 		}
 		result = append(result, q)
 	}
 	return result, nil
+}
+
+func validCertification(value string) bool {
+	return value == "frontend" || value == "backend" || value == "devops"
 }
 
 func verifiedEmail(token *auth.Token) bool {

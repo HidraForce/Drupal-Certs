@@ -13,7 +13,7 @@
             "browser": "src/main.ts",
             "tsConfig": "tsconfig.app.json",
             "assets": [{ "glob": "**/*", "input": "public" }],
-            "styles": ["src/styles.css", "src/admin.css"]
+            "styles": ["src/styles.css"]
           },
           "configurations": {
             "production": { "budgets": [{ "type": "initial", "maximumWarning": "650kB", "maximumError": "850kB" }], "outputHashing": "all" },

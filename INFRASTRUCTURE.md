@@ -92,9 +92,9 @@ Do not include a trailing slash. Redeploy both API projects after changing it. I
 
 1. Ensure the quiz project has your exact verified Google email in `ADMIN_EMAILS`.
 2. Sign into the Angular site using that account.
-3. Open **Admin** and import `data/questions.example.csv`.
+3. Open **Admin**, choose Front End, Back End, or DevOps for the ledger, and import `data/questions.example.csv`.
 
-Imports are limited to 2 MiB and 400 rows. Answers are zero-based: `0=A`, `1=B`, `2=C`, `3=D`. Re-importing an existing question ID updates it.
+Imports are limited to 2 MiB and 400 rows. The chosen certification is stored on every imported question. Answers are zero-based: `0=A`, `1=B`, `2=C`, `3=D`. Re-importing an existing question ID updates it.
 
 ## Troubleshooting
 
