@@ -9,3 +9,27 @@
 .loading-track{height:12px;margin-top:26px;overflow:hidden;border:1px solid var(--line);background:#c7b58f;box-shadow:inset 0 0 0 2px #eadfc8}
 .loading-track i{display:block;width:42%;height:100%;background:linear-gradient(90deg,var(--copper),var(--brass),var(--copper));animation:loading-slide 1.25s ease-in-out infinite}
 @keyframes loading-slide{0%{transform:translateX(-105%)}100%{transform:translateX(240%)}}
+.answer-submit{min-width:190px}
+.button-spinner{display:inline-block;width:13px;height:13px;margin-right:8px;vertical-align:-2px;border:2px solid #25170d55;border-top-color:#25170d;border-radius:50%;animation:spin .7s linear infinite}
+.answers button:disabled{cursor:wait;opacity:.72}
+.exam-results{display:grid;gap:46px}
+.exam-results>.result-card{margin-bottom:0}
+.review-section{display:grid;gap:24px}
+.review-heading{text-align:center;color:var(--cream)}
+.review-heading h2{font-size:34px;margin:16px 0 8px}
+.review-heading p{color:#d8c6df}
+.review-list{display:grid;gap:20px}
+.review-card{padding:30px;color:var(--ink)}
+.review-card header{display:flex;align-items:center;justify-content:space-between;gap:16px;padding-bottom:14px;border-bottom:1px solid #a98a61}
+.review-card header span{font-weight:800;text-transform:uppercase;letter-spacing:.8px}
+.review-card header small{color:#705943;text-transform:uppercase;letter-spacing:.7px}
+.review-card.review-correct header span{color:#3f6338}
+.review-card.review-wrong header span{color:#8a3028}
+.review-card h3{font-size:21px;line-height:1.45}
+.review-answer{display:grid;grid-template-columns:130px 1fr;gap:14px;padding:12px 14px;margin-top:9px;border:1px solid #a98a61;background:#e1d1b2}
+.review-answer.yours{border-left:5px solid #8a3028}
+.review-correct .review-answer.yours,.review-answer.correct-answer{border-left:5px solid #4f7446}
+.review-answer b,.review-explanation b{text-transform:uppercase;font-size:10px;letter-spacing:1px}
+.review-explanation{margin-top:15px;padding:16px;background:#35253f;color:var(--cream);border:1px solid var(--brass)}
+.review-explanation p{margin:7px 0 0;color:#dfd0e2;line-height:1.6}
+@media(max-width:620px){.review-card header{align-items:flex-start;flex-direction:column}.review-answer{grid-template-columns:1fr}}
