@@ -21,6 +21,15 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+)
+
+type contextKey string
+
+const (
+	userIDKey    contextKey = "userID"
+	userEmailKey contextKey = "userEmail"
 )
 
 type Question struct {
@@ -80,12 +89,17 @@ func main() {
 	r.Get("/health", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "ok", "service": "quiz"})
 	})
-	r.Get("/v1/questions", s.listQuestions)
+	r.With(s.requireUser).Get("/v1/questions", s.listQuestions)
 	r.With(s.requireUser).Post("/v1/questions/{id}/check", s.checkAnswer)
+	r.With(s.requireUser).Post("/v1/questions/{id}/report", s.reportQuestion)
 	r.Group(func(r chi.Router) {
 		r.Use(s.requireAdmin)
 		r.Get("/v1/admin/status", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]bool{"admin": true}) })
 		r.Post("/v1/admin/questions/import", s.importQuestions)
+		r.Get("/v1/admin/review", s.reviewQueue)
+		r.Post("/v1/admin/questions/{id}/review", s.resolveReview)
+		r.Get("/v1/admin/exhaustion-alerts", s.exhaustionAlerts)
+		r.Post("/v1/admin/exhaustion-alerts/{id}/resolve", s.resolveExhaustionAlert)
 	})
 	port := env("PORT", "8081")
 	log.Printf("quiz service listening on :%s", port)
@@ -135,9 +149,42 @@ func (s *server) listQuestions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load questions", 500)
 		return
 	}
+	certification := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("certification")))
+	if certification != "" && !validCertification(certification) {
+		http.Error(w, "invalid certification", 400)
+		return
+	}
+	answered := map[string]bool{}
+	if s.store != nil {
+		iter := s.store.Collection("users").Doc(userID(r)).Collection("answered").Documents(r.Context())
+		defer iter.Stop()
+		for {
+			doc, nextErr := iter.Next()
+			if errors.Is(nextErr, iterator.Done) {
+				break
+			}
+			if nextErr != nil {
+				http.Error(w, "could not load answer history", 500)
+				return
+			}
+			answered[doc.Ref.ID] = true
+		}
+	}
 	out := make([]publicQuestion, 0, len(all))
+	totalInTrack := 0
 	for _, q := range all {
+		if certification != "" && q.Certification != certification {
+			continue
+		}
+		totalInTrack++
+		if answered[q.ID] {
+			continue
+		}
 		out = append(out, publicQuestion{q.ID, q.Certification, q.Domain, q.Prompt, q.Options})
+	}
+	if len(out) == 0 && totalInTrack > 0 && s.store != nil {
+		s.recordExhaustion(r.Context(), userID(r), userEmail(r), certification, totalInTrack, totalInTrack)
+		w.Header().Set("X-Question-Status", "exhausted")
 	}
 	writeJSON(w, 200, out)
 }
@@ -157,6 +204,25 @@ func (s *server) checkAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, q := range all {
 		if q.ID == chi.URLParam(r, "id") {
+			if s.store != nil {
+				ref := s.store.Collection("users").Doc(userID(r)).Collection("answered").Doc(q.ID)
+				err := s.store.RunTransaction(r.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
+					if _, getErr := tx.Get(ref); getErr == nil {
+						return status.Error(codes.AlreadyExists, "question already answered")
+					} else if status.Code(getErr) != codes.NotFound {
+						return getErr
+					}
+					return tx.Create(ref, map[string]any{"questionId": q.ID, "certification": q.Certification, "correct": body.Answer == q.Answer, "answeredAt": time.Now().UTC()})
+				})
+				if status.Code(err) == codes.AlreadyExists {
+					http.Error(w, "question already answered", http.StatusConflict)
+					return
+				}
+				if err != nil {
+					http.Error(w, "could not save answer", 500)
+					return
+				}
+			}
 			writeJSON(w, 200, map[string]any{"correct": body.Answer == q.Answer, "answer": q.Answer, "explanation": q.Explanation})
 			return
 		}
@@ -191,12 +257,154 @@ func (s *server) requireUser(next http.Handler) http.Handler {
 			http.Error(w, "authentication required", 401)
 			return
 		}
-		if _, err := s.auth.VerifyIDToken(r.Context(), raw); err != nil {
+		token, err := s.auth.VerifyIDToken(r.Context(), raw)
+		if err != nil {
 			http.Error(w, "invalid token", 401)
 			return
 		}
-		next.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), userIDKey, token.UID)
+		ctx = context.WithValue(ctx, userEmailKey, fmt.Sprint(token.Claims["email"]))
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func userID(r *http.Request) string { value, _ := r.Context().Value(userIDKey).(string); return value }
+func userEmail(r *http.Request) string {
+	value, _ := r.Context().Value(userEmailKey).(string)
+	return value
+}
+
+func (s *server) reportQuestion(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "report storage is not configured", 503)
+		return
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2048)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "invalid report", 400)
+		return
+	}
+	body.Reason = strings.TrimSpace(body.Reason)
+	if len(body.Reason) > 500 {
+		http.Error(w, "reason is too long", 400)
+		return
+	}
+	id := chi.URLParam(r, "id")
+	all, err := s.questions(r.Context())
+	if err != nil {
+		http.Error(w, "could not load question", 500)
+		return
+	}
+	var question *Question
+	for i := range all {
+		if all[i].ID == id {
+			question = &all[i]
+			break
+		}
+	}
+	if question == nil {
+		http.Error(w, "question not found", 404)
+		return
+	}
+	questionRef := s.store.Collection("questions").Doc(id)
+	reportRef := questionRef.Collection("reports").Doc(userID(r))
+	reportCount := int64(0)
+	err = s.store.RunTransaction(r.Context(), func(ctx context.Context, tx *firestore.Transaction) error {
+		if _, getErr := tx.Get(reportRef); getErr == nil {
+			return status.Error(codes.AlreadyExists, "already reported")
+		} else if status.Code(getErr) != codes.NotFound {
+			return getErr
+		}
+		if doc, getErr := tx.Get(questionRef); getErr == nil {
+			if value, ok := doc.Data()["reportCount"].(int64); ok {
+				reportCount = value
+			}
+		} else if status.Code(getErr) != codes.NotFound {
+			return getErr
+		}
+		reportCount++
+		if err := tx.Create(reportRef, map[string]any{"uid": userID(r), "email": userEmail(r), "reason": body.Reason, "reportedAt": time.Now().UTC()}); err != nil {
+			return err
+		}
+		return tx.Set(questionRef, map[string]any{"id": question.ID, "certification": question.Certification, "domain": question.Domain, "prompt": question.Prompt, "options": question.Options, "answer": question.Answer, "explanation": question.Explanation, "source": question.Source, "reportCount": reportCount, "needsReview": reportCount >= 3, "updatedAt": time.Now().UTC()}, firestore.MergeAll)
+	})
+	if status.Code(err) == codes.AlreadyExists {
+		http.Error(w, "you already reported this question", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		http.Error(w, "could not report question", 500)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"reported": true, "reportCount": reportCount, "needsReview": reportCount >= 3})
+}
+
+func (s *server) recordExhaustion(ctx context.Context, uid, email, certification string, answeredCount, availableCount int) {
+	ref := s.store.Collection("exhaustionAlerts").Doc(uid + "-" + certification)
+	_, err := ref.Create(ctx, map[string]any{"uid": uid, "email": email, "certification": certification, "answeredCount": answeredCount, "availableCount": availableCount, "createdAt": time.Now().UTC(), "resolved": false})
+	if err != nil && status.Code(err) != codes.AlreadyExists {
+		log.Printf("record exhaustion alert: %v", err)
+	}
+}
+
+func (s *server) reviewQueue(w http.ResponseWriter, r *http.Request) {
+	iter := s.store.Collection("questions").Where("needsReview", "==", true).Documents(r.Context())
+	defer iter.Stop()
+	items := []map[string]any{}
+	for {
+		doc, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			http.Error(w, "could not load review queue", 500)
+			return
+		}
+		data := doc.Data()
+		data["id"] = doc.Ref.ID
+		items = append(items, data)
+	}
+	writeJSON(w, 200, items)
+}
+
+func (s *server) resolveReview(w http.ResponseWriter, r *http.Request) {
+	_, err := s.store.Collection("questions").Doc(chi.URLParam(r, "id")).Set(r.Context(), map[string]any{"needsReview": false, "reportCount": 0, "reviewedAt": time.Now().UTC()}, firestore.MergeAll)
+	if err != nil {
+		http.Error(w, "could not resolve review", 500)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"resolved": true})
+}
+
+func (s *server) exhaustionAlerts(w http.ResponseWriter, r *http.Request) {
+	iter := s.store.Collection("exhaustionAlerts").Where("resolved", "==", false).Documents(r.Context())
+	defer iter.Stop()
+	items := []map[string]any{}
+	for {
+		doc, err := iter.Next()
+		if errors.Is(err, iterator.Done) {
+			break
+		}
+		if err != nil {
+			http.Error(w, "could not load alerts", 500)
+			return
+		}
+		data := doc.Data()
+		data["id"] = doc.Ref.ID
+		items = append(items, data)
+	}
+	writeJSON(w, 200, items)
+}
+
+func (s *server) resolveExhaustionAlert(w http.ResponseWriter, r *http.Request) {
+	_, err := s.store.Collection("exhaustionAlerts").Doc(chi.URLParam(r, "id")).Set(r.Context(), map[string]any{"resolved": true, "resolvedAt": time.Now().UTC()}, firestore.MergeAll)
+	if err != nil {
+		http.Error(w, "could not resolve alert", 500)
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"resolved": true})
 }
 
 func (s *server) importQuestions(w http.ResponseWriter, r *http.Request) {
@@ -306,6 +514,7 @@ func cors(next http.Handler) http.Handler {
 			w.Header().Set("Vary", "Origin")
 		}
 		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Question-Status")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")

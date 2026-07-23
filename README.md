@@ -2,6 +2,8 @@
 
 A lightweight, playful study app for Drupal front-end certification practice.
 
+Learners receive each question at most once per account and certification track. Distinct-user reports move a question into the admin review queue after three reports, and exhausted question banks create admin supply alerts.
+
 ## Architecture
 
 - `web`: standalone Angular SPA, CSS-only motion, Firebase Google sign-in

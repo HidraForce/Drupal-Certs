@@ -96,6 +96,8 @@ Do not include a trailing slash. Redeploy both API projects after changing it. I
 
 Imports are limited to 2 MiB and 400 rows. The chosen certification is stored on every imported question. Answers are zero-based: `0=A`, `1=B`, `2=C`, `3=D`. Re-importing an existing question ID updates it.
 
+The Quiz API stores answered question IDs below each Firebase user and excludes them from all future selections. Three distinct user reports set `needsReview` on a question. Admin Review and Exhausted Users tabs read these Firestore records; no additional Vercel variables are required.
+
 ## Troubleshooting
 
 - **`cd web: No such file or directory`**: the web project's root is already `web`; use the checked-in `web/vercel.json`, which does not run `cd web`.
