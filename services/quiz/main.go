@@ -273,7 +273,7 @@ func cors(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin, allowed := r.Header.Get("Origin"), false
 		for _, value := range strings.Split(env("WEB_ORIGIN", "http://localhost:4200"), ",") {
-			if strings.TrimSpace(value) == origin {
+			if strings.TrimRight(strings.TrimSpace(value), "/") == origin {
 				allowed = true
 				break
 			}
